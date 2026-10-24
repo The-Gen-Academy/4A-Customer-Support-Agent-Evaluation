@@ -1,12 +1,38 @@
-# Compare an LLM judge with Jev
+# Build an LLM judge, then try Jev
 
 The classifier chooses a support route. The judge checks a different question:
 **Does this classifier mistake belong to the failure category we chose?**
 
-Both judges see only the ticket and predicted route. We compare their answers with
-your Step 3 labels afterward. They never see the true route, failure label, or reviewer notes.
+Start by learning how an LLM judge works. Then try Jev if you want an alternative.
+Both see only the ticket and predicted route. We check their answers against your
+Step 3 labels afterward. They never see the true route, failure label, or reviewer notes.
 
-## Which Jev question type?
+For example, if the customer asks for a refund but the classifier chooses `order_status`,
+the judge should mark `Refund_Missed` as TRUE. A broken-product complaint without a
+refund request should be FALSE. FALSE means a different kind of mistake, not a correct route.
+
+## 1. Build and understand the LLM judge
+
+1. Open notebook **Section 11** from a full clone/download of this repository. Start with
+   the demo to learn the steps. It runs independently of the classifier and needs no
+   Google or LangSmith credentials.
+2. In **11a–11b**, load the examples and write the rubric: the exact target label, its
+   definition, and clear TRUE/FALSE rules. Inspect the input the judge will see.
+3. In **11c**, define the answer format and create the OpenAI judge. Enter an OpenAI key
+   privately when prompted, or set `OPENAI_API_KEY` locally. Try one ticket and check
+   whether its TRUE/FALSE answer and short reason follow your rule.
+4. In **11d–11e**, run all the examples and review the results. Agreement measures matches
+   with your labels. Precision checks its TRUE answers; recall checks how many target
+   failures it found. Read a few disagreements, not just the overall numbers.
+5. For your evaluation, complete Step 3 in **your own copy** of the workbook. Export it
+   as CSV, or download the workbook as XLSX. Keep both your chosen category and other
+   failures. Change `INPUT_PATH` and the rubric, then rerun from 11a.
+
+## 2. Optionally add Jev
+
+In **Section 12**, use the same rows and rubric with Jev. Enter a TypeSafe key privately
+when prompted, or set `TYPESAFE_API_KEY` locally. If you only want Jev, run the shared
+setup in 11a–11b, then go straight to Section 12. No OpenAI key is needed for that path.
 
 | Type | Use it for | In this project |
 | --- | --- | --- |
@@ -14,27 +40,20 @@ your Step 3 labels afterward. They never see the true route, failure label, or r
 | Choice | Pick one of several named options | An extension: choose among all your failure categories, including `other`. |
 | Score | Rate something on ordered, descriptive levels | An extension: rate the severity of a mistake. You would need severity labels to evaluate it. |
 
-Jev's Noul returns the probability of TRUE. We use `p >= 0.5` for the comparison,
-and flag `0.3 < p < 0.7` for review. These are starting settings, not validated thresholds.
-Review-flagged rows still count in the metrics. The probability is not a quality score,
-and Jev does not produce a written reason. OpenAI returns a boolean and a short reason.
+Try one ticket in **12a**, then run all examples and review the results in **12b**.
+Jev's Noul returns the probability of TRUE. We use `p >= 0.5` for TRUE and flag
+`0.3 < p < 0.7` for review. These are starting settings, not validated thresholds.
+Flagged rows still count in the metrics. The probability is not a quality score,
+and Jev does not produce a written reason.
 
-## Participant exercise
+## 3. Reflect and save your work
 
-1. Complete Step 3 in **your own copy** of the workbook. Keep both the chosen failure
-   category and other failures. Export that tab as CSV, or download the workbook as XLSX.
-2. Open notebook **Section 11** from a full clone/download of this repository.
-   It runs independently of Sections 2–10. Set `INPUT_PATH` to your export.
-3. Write the exact target label, its definition, and clear TRUE/FALSE rules in `Rubric`.
-   Use your workbook's routing policy. Do not mix these rows with the notebook's generated dataset.
-4. Run Jev with `TYPESAFE_API_KEY`. Run the OpenAI judge with `OPENAI_API_KEY` for comparison.
-   The notebook asks privately if a key is missing. Neither Google nor LangSmith credentials
-   are needed for Section 11. Jev alone needs no OpenAI key.
-5. Compare agreement, precision, recall, false positives, and false negatives. Inspect a
-   few mismatches and uncertain Jev rows. If there are API errors, fix them and rerun before comparing judges.
-6. Improve one rubric rule or try another model. Use a small practice subset to make that
-   change, then check separate untouched examples. With very few rows, describe the result
-   as exploratory; do not claim it proves a better judge.
+If you ran both judges, **13a** checks that the rows and rubric match and that there
+were no API errors before showing the metrics together. Compare false alarms, missed
+target failures, and individual decisions. You can also finish with just one judge.
+
+To improve a rule, use a small practice subset, then check separate untouched examples.
+With very few rows, describe the result as exploratory; do not claim it proves a better judge.
 
 Each run saves `results.csv` and `run.json` in a new folder under `judge_runs/`.
 Import each CSV into a **new tab** in your workbook (File → Import → Upload → Insert new sheet).
@@ -42,9 +61,9 @@ Keep the run folders so the model, rubric, threshold, and dataset fingerprint re
 Use Step 5 as the results area and Step 6 for your comparison notes. The code exports files;
 it does not write directly into Google Sheets or fill the existing Step 5 template.
 
-Submit your labeled workbook, both result CSVs (if you ran both judges), and two sentences:
-which judge you chose, and one mistake or tradeoff you noticed. A strong result is an
-honest comparison, not necessarily higher agreement.
+Follow **13b** to submit your labeled workbook and result CSVs. In Step 6, explain one
+decision you reviewed and one rule you would improve. If you ran both judges, also say
+which you would use and why.
 
 ## Try the included demo first
 

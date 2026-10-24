@@ -1,6 +1,6 @@
 """Compare a binary OpenAI judge and Jev against human failure labels.
 
-Import this module from notebook Section 11. Importing it never makes API calls.
+Use this module in notebook Sections 11–13. Importing it never makes API calls.
 """
 
 import csv

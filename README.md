@@ -19,7 +19,7 @@ The repository includes an executed evaluation notebook, the human-review workbo
 | [`results_v1.csv`](results_v1.csv) | Baseline predictions and evaluation results. |
 | [`results_v2.csv`](results_v2.csv) | Improved-prompt predictions and evaluation results. |
 | [`docs/opentelemetry_integration_one_pager.md`](docs/opentelemetry_integration_one_pager.md) | Overview of the OpenTelemetry and LangSmith tracing setup. |
-| [`judge_evaluation.py`](judge_evaluation.py) | Binary OpenAI and Jev judges, input checks, metrics, and CSV exports for notebook Section 11. |
+| [`judge_evaluation.py`](judge_evaluation.py) | Binary OpenAI and Jev judges, input checks, metrics, and CSV exports for notebook Sections 11–13. |
 | [`docs/jev_judge.md`](docs/jev_judge.md) | Short participant exercise, setup, and Noul / Choice / Score guide. |
 
 ## Results
@@ -40,17 +40,23 @@ The notebook and workbook support the following review process:
 2. Annotate incorrect predictions and group recurring failure patterns.
 3. Revise the classifier prompt to address a selected failure pattern.
 4. Rerun the evaluation and compare the new results with the baseline.
-5. Optionally compare OpenAI and Jev judges against your failure labels in notebook Section 11.
+5. Optionally build an LLM judge in Section 11, try Jev in Section 12, then compare their results in Section 13.
 
-## Jev and LLM judges (optional)
+## Learn to use a judge (optional)
 
-Section 11 now implements both judges. It runs on saved, labeled failures without rerunning
-the classifier. Jev uses **Noul**, its yes/no question type, to detect one chosen failure
-category. OpenAI answers the same question with a boolean and a short reason.
+Start with **Section 11**: write a rubric, build an OpenAI LLM judge, try one ticket,
+then evaluate all your labeled failures and review the results. The judge checks whether
+each mistake fits one chosen failure category and returns TRUE/FALSE with a short reason.
+
+In **Section 12**, optionally try Jev on the same question. Jev uses **Noul**, its yes/no
+question type, and returns a probability of TRUE. **Section 13** compares results only
+after both judges have been introduced, and explains how to save and submit your work.
+The exercise runs on saved failures without rerunning the classifier.
 
 Start with the included demo, then use your Step 3 CSV/XLSX and your own rubric.
-Set `TYPESAFE_API_KEY` for Jev and `OPENAI_API_KEY` for the OpenAI comparison; the notebook
-can ask for them privately. Install the section's dependencies with
+Use `OPENAI_API_KEY` for Section 11 and `TYPESAFE_API_KEY` for optional Section 12; the notebook
+asks for them privately. If using only Jev, run the shared setup in 11a–11b first.
+Install the exercise's dependencies with
 `pip install -r requirements-judge.txt`. Each run exports a CSV to import as a new workbook tab.
 
 The workbook and generated notebook data use different routing policies; keep each dataset
