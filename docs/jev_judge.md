@@ -48,13 +48,8 @@ honest comparison, not necessarily higher agreement.
 
 ## Try the included demo first
 
-Section 11 defaults to `examples/refund_missed_demo.csv` and the matching rubric JSON.
-It contains the workbook's 29 classifier failures. The 12 `Refund_Missed` labels come
-from its existing `LLM-J Dataset` tab. The other 17 rows were assigned `Other_failure`
-as illustrative reference labels while preparing this integration: they describe
-delivery/account problems, product descriptions, feedback, or pre-purchase authenticity
-questions without post-purchase refund intent. These additions are **not independently
-human-validated labels**. The demo is a wiring check, not a benchmark or participant submission.
+Start with `examples/refund_missed_demo.csv` and its matching rubric in Section 11.
+These example labels are provided for practice. For your evaluation, use the labels you reviewed and assigned in Step 3.
 
 The workbook's `LLM-J Dataset` tab alone has only 12 positive examples. Running only
 those would hide false positives. The loader requires both positive and negative examples,

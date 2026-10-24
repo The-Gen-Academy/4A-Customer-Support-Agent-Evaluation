@@ -54,7 +54,7 @@ can ask for them privately. Install the section's dependencies with
 `pip install -r requirements-judge.txt`. Each run exports a CSV to import as a new workbook tab.
 
 The workbook and generated notebook data use different routing policies; keep each dataset
-with its own labels. The demo includes illustrative labels and is not a validated benchmark.
+with its own labels. These example labels are provided for practice. For your evaluation, use the labels you reviewed and assigned in Step 3.
 See the [participant guide](docs/jev_judge.md) for the exercise and submission steps.
 
 ## OpenTelemetry and LangSmith
