@@ -19,6 +19,8 @@ The repository includes an executed evaluation notebook, the human-review workbo
 | [`results_v1.csv`](results_v1.csv) | Baseline predictions and evaluation results. |
 | [`results_v2.csv`](results_v2.csv) | Improved-prompt predictions and evaluation results. |
 | [`docs/opentelemetry_integration_one_pager.md`](docs/opentelemetry_integration_one_pager.md) | Overview of the OpenTelemetry and LangSmith tracing setup. |
+| [`judge_evaluation.py`](judge_evaluation.py) | Binary OpenAI and Jev judges, input checks, metrics, and CSV exports for notebook Section 11. |
+| [`docs/jev_judge.md`](docs/jev_judge.md) | Short participant exercise, setup, and Noul / Choice / Score guide. |
 
 ## Results
 
@@ -38,7 +40,22 @@ The notebook and workbook support the following review process:
 2. Annotate incorrect predictions and group recurring failure patterns.
 3. Revise the classifier prompt to address a selected failure pattern.
 4. Rerun the evaluation and compare the new results with the baseline.
-5. Optionally test and align an LLM-as-judge evaluator.
+5. Optionally compare OpenAI and Jev judges against your failure labels in notebook Section 11.
+
+## Jev and LLM judges (optional)
+
+Section 11 now implements both judges. It runs on saved, labeled failures without rerunning
+the classifier. Jev uses **Noul**, its yes/no question type, to detect one chosen failure
+category. OpenAI answers the same question with a boolean and a short reason.
+
+Start with the included demo, then use your Step 3 CSV/XLSX and your own rubric.
+Set `TYPESAFE_API_KEY` for Jev and `OPENAI_API_KEY` for the OpenAI comparison; the notebook
+can ask for them privately. Install the section's dependencies with
+`pip install -r requirements-judge.txt`. Each run exports a CSV to import as a new workbook tab.
+
+The workbook and generated notebook data use different routing policies; keep each dataset
+with its own labels. The demo includes illustrative labels and is not a validated benchmark.
+See the [participant guide](docs/jev_judge.md) for the exercise and submission steps.
 
 ## OpenTelemetry and LangSmith
 
