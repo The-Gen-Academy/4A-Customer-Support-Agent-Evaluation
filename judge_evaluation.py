@@ -125,28 +125,24 @@ class JudgeError(RuntimeError):
     """A safe-to-display failure without headers, secrets, or response bodies."""
 
 
-class JevJudge:
-    provider = "jev"
+class InvalidJudgeOutput(JudgeError):
+    """A response arrived but could not be used as a validated judgment."""
 
-    def __init__(self, api_key=None, model="jev-1.14.0", threshold=0.5,
-                 review_low=0.3, review_high=0.7, session=None, sleep=time.sleep):
+
+class _TypeSafeJudge:
+    def __init__(self, api_key=None, model="jev-1.14.0", session=None, sleep=time.sleep):
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY")
         if not self.api_key:
             raise ValueError("Set TYPESAFE_API_KEY locally to run Jev.")
         self.model = model
-        self.threshold = _probability(threshold, "threshold")
-        self.review_low = _probability(review_low, "review_low")
-        self.review_high = _probability(review_high, "review_high")
-        if not self.review_low <= self.threshold <= self.review_high:
-            raise ValueError("Use review_low <= threshold <= review_high.")
         self.session = session or requests.Session()
         self.sleep = sleep
 
-    def judge(self, state, rubric):
+    def _request(self, state, rubric, question_type):
         payload = {
             "model": self.model, "state": state,
             "questions": {"target_failure": {
-                "type": "noul", "instructions": rubric.instructions,
+                "type": question_type, "instructions": rubric.instructions,
                 "criteria": {"true": rubric.positive, "false": rubric.negative},
             }},
         }
@@ -175,6 +171,30 @@ class JevJudge:
             break
         try:
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("Unexpected response")
+            return data
+        except ValueError:
+            raise InvalidJudgeOutput("TypeSafe returned invalid JSON.") from None
+
+
+class JevJudge(_TypeSafeJudge):
+    """The original standalone Noul exercise; its probability policy is unchanged."""
+
+    provider = "jev"
+
+    def __init__(self, api_key=None, model="jev-1.14.0", threshold=0.5,
+                 review_low=0.3, review_high=0.7, session=None, sleep=time.sleep):
+        super().__init__(api_key, model, session, sleep)
+        self.threshold = _probability(threshold, "threshold")
+        self.review_low = _probability(review_low, "review_low")
+        self.review_high = _probability(review_high, "review_high")
+        if not self.review_low <= self.threshold <= self.review_high:
+            raise ValueError("Use review_low <= threshold <= review_high.")
+
+    def judge(self, state, rubric):
+        data = self._request(state, rubric, "noul")
+        try:
             answer = data["answers"]["target_failure"]
             if answer["type"] != "noul" or not isinstance(data["model"], str):
                 raise ValueError("Unexpected response type")
@@ -186,6 +206,37 @@ class JevJudge:
             "probability_true": p, "needs_review": self.review_low < p < self.review_high,
             "judge_reasoning": "",  # Jev does not generate explanations.
             "model": data["model"], "usage": data.get("usage", {}),
+        }
+
+
+class JevChoiceJudge(_TypeSafeJudge):
+    """Binary Choice exposes native confidence for the optional fallback policy."""
+
+    provider = "jev_choice"
+
+    def judge(self, state, rubric):
+        data = self._request(state, rubric, "choice")
+        try:
+            answer = data["answers"]["target_failure"]
+            if (answer["type"] != "choice" or answer["choice"] not in ("true", "false")
+                    or not isinstance(data["model"], str) or not data["model"].strip()):
+                raise ValueError("Unexpected Choice response")
+            probabilities = answer["probabilities"]
+            if not isinstance(probabilities, dict) or set(probabilities) != {"true", "false"}:
+                raise ValueError("Expected both binary options")
+            probabilities = {k: _probability(v, k) for k, v in probabilities.items()}
+            confidence = _probability(answer["confidence"], "confidence")
+            highest = max(probabilities.values())
+            if (not math.isclose(sum(probabilities.values()), 1.0, abs_tol=1e-6)
+                    or probabilities[answer["choice"]] != highest
+                    or not math.isclose(confidence, 2 * highest - 1, abs_tol=1e-6)):
+                raise ValueError("Inconsistent Choice response")
+        except (KeyError, TypeError, ValueError):
+            raise InvalidJudgeOutput("TypeSafe returned an invalid binary Choice response.") from None
+        return {
+            "judge_prediction": answer["choice"] == "true", "confidence": confidence,
+            "probability_true": probabilities["true"], "needs_review": None,
+            "judge_reasoning": "", "model": data["model"], "usage": data.get("usage", {}),
         }
 
 
@@ -230,6 +281,88 @@ class OpenAIJudge:
             raise JudgeError("OpenAI judge failed; check the key, model, connection, or structured output.") from None
 
 
+class HybridJudge:
+    """Jev call -> validation -> confidence gate -> LLM fallback -> final verdict.
+
+    Logging is returned even when neither stage yields a usable answer. This makes
+    the route auditable without overwriting or reusing the LLM-only baseline.
+    """
+
+    provider = "jev_llm"
+
+    def __init__(self, jev, fallback, confidence_threshold=0.70):
+        self.jev = jev
+        self.fallback = fallback
+        self.confidence_threshold = _probability(confidence_threshold, "confidence_threshold")
+        self.model = f"{jev.model} -> {fallback.model}"
+
+    def judge(self, state, rubric):
+        result = {
+            "judge_prediction": None, "judge_reasoning": "", "probability_true": None,
+            "needs_review": False, "status": "ok", "error": "", "model": self.model,
+            "judge_used": "unresolved", "escalated": False, "escalation_reason": "",
+            "jev_prediction": None, "jev_confidence": None, "jev_probability_true": None,
+            "jev_model": None, "jev_usage": None, "jev_error": "", "jev_latency_seconds": None,
+            "llm_prediction": None, "llm_reasoning": "", "llm_model": None,
+            "llm_usage": None, "llm_error": "", "llm_latency_seconds": None,
+        }
+        start = time.perf_counter()
+        try:
+            answer = self.jev.judge(dict(state), rubric)
+            if not isinstance(answer, dict) or type(answer.get("judge_prediction")) is not bool:
+                raise InvalidJudgeOutput("Jev returned a non-boolean prediction.")
+            try:
+                confidence = _probability(answer.get("confidence"), "confidence")
+            except ValueError:
+                raise InvalidJudgeOutput("Jev returned missing or invalid confidence.") from None
+            result.update(
+                jev_prediction=answer["judge_prediction"], jev_confidence=confidence,
+                jev_probability_true=answer.get("probability_true"),
+                jev_model=answer.get("model", self.jev.model), jev_usage=answer.get("usage", {}),
+            )
+            # Use native, unrounded confidence, including for confident FALSE answers.
+            if confidence >= self.confidence_threshold:
+                result.update(judge_used="jev", judge_prediction=answer["judge_prediction"],
+                              probability_true=answer.get("probability_true"), model=result["jev_model"])
+            else:
+                result["escalation_reason"] = "low_confidence"
+        except InvalidJudgeOutput as exc:
+            result.update(jev_error=str(exc), escalation_reason="invalid_jev_output")
+        except JudgeError as exc:
+            result.update(jev_error=str(exc), escalation_reason="jev_error")
+        except Exception:
+            result.update(jev_error="Jev call failed unexpectedly.", escalation_reason="jev_error")
+        result["jev_latency_seconds"] = round(time.perf_counter() - start, 4)
+
+        if result["judge_used"] != "jev":
+            result["escalated"] = True
+            start = time.perf_counter()
+            try:
+                # Same evidence and rubric; do not leak Jev's verdict or human labels.
+                answer = self.fallback.judge(dict(state), rubric)
+                if not isinstance(answer, dict) or type(answer.get("judge_prediction")) is not bool:
+                    raise InvalidJudgeOutput("LLM fallback returned a non-boolean prediction.")
+                reasoning = answer.get("judge_reasoning", "")
+                if not isinstance(reasoning, str):
+                    raise InvalidJudgeOutput("LLM fallback returned invalid reasoning.")
+                result.update(
+                    judge_used="llm", judge_prediction=answer["judge_prediction"],
+                    judge_reasoning=reasoning, llm_prediction=answer["judge_prediction"],
+                    llm_reasoning=reasoning, llm_model=answer.get("model", self.fallback.model),
+                    llm_usage=answer.get("usage", {}), model=answer.get("model", self.fallback.model),
+                )
+            except JudgeError as exc:
+                result["llm_error"] = str(exc)
+            except Exception:
+                result["llm_error"] = "LLM fallback failed unexpectedly."
+            result["llm_latency_seconds"] = round(time.perf_counter() - start, 4)
+            if result["judge_used"] == "unresolved":
+                result.update(status="unresolved", needs_review=True,
+                              error="LLM fallback failed; review this unresolved row.")
+        result["usage"] = {"jev": result["jev_usage"], "llm": result["llm_usage"]}
+        return result
+
+
 def summarize(results):
     """Compute agreement on completed judgments; report errors and class balance."""
     done = [r for r in results if r["status"] == "ok"]
@@ -247,6 +380,12 @@ def summarize(results):
         "precision": ratio(tp, tp + fp), "recall": ratio(tp, tp + fn),
         "tp": tp, "tn": tn, "fp": fp, "fn": fn,
         "review_rows": sum(r["needs_review"] is True for r in done),
+        "unresolved": sum(r["status"] == "unresolved" for r in results),
+        "escalations": sum(r.get("escalated") is True for r in results),
+        "escalation_rate": ratio(sum(r.get("escalated") is True for r in results), len(results)),
+        "jev_accepted": sum(r.get("judge_used") == "jev" for r in done),
+        "latency_seconds": sum(r.get("latency_seconds", 0) for r in results),
+        "mean_latency_seconds": ratio(sum(r.get("latency_seconds", 0) for r in results), len(results)),
     }
 
 
@@ -265,9 +404,14 @@ def run_evaluation(rows, rubric, judge):
         start = time.perf_counter()
         try:
             result.update(judge.judge(judge_state(row), rubric))
-            if type(result["judge_prediction"]) is not bool:
-                raise JudgeError("Judge returned a non-boolean prediction.")
-            result["match"] = result["judge_prediction"] == expected
+            if result["status"] == "ok":
+                if type(result["judge_prediction"]) is not bool:
+                    raise JudgeError("Judge returned a non-boolean prediction.")
+                result["match"] = result["judge_prediction"] == expected
+            elif result["status"] in {"unresolved", "error"}:
+                result.update(judge_prediction=None, match=None)
+            else:
+                raise JudgeError("Judge returned an unknown status.")
         except JudgeError as exc:
             result.update(status="error", error=str(exc), judge_prediction=None, match=None)
         result["latency_seconds"] = round(time.perf_counter() - start, 4)
@@ -283,21 +427,54 @@ def save_run(results, rubric, judge, output_dir="judge_runs"):
     columns = ["id", "ticket_text", "true_category", "predicted_category", "failure_category",
                "ground_truth", "judge_prediction", "probability_true", "needs_review", "judge_reasoning",
                "match", "status", "error", "provider", "model", "latency_seconds", "usage"]
+    if judge.provider == "jev_llm":
+        columns += ["judge_used", "escalated", "escalation_reason", "jev_prediction", "jev_confidence",
+                    "jev_probability_true", "jev_model", "jev_usage", "jev_error", "jev_latency_seconds",
+                    "llm_prediction", "llm_reasoning", "llm_model", "llm_usage", "llm_error", "llm_latency_seconds"]
     with (folder / "results.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         for row in results:
             out = {k: row.get(k) for k in columns}
-            out["usage"] = json.dumps(out["usage"], sort_keys=True)
+            for key in ("usage", "jev_usage", "llm_usage"):
+                if key in out:
+                    out[key] = json.dumps(out[key], sort_keys=True)
             writer.writerow(out)
-    source = [{k: r[k] for k in sorted(REQUIRED)} for r in results]
     metadata = {
         "created_at_utc": stamp, "provider": judge.provider, "requested_model": judge.model,
         "resolved_models": sorted({r["model"] for r in results if r["status"] == "ok"}),
         "rubric": asdict(rubric), "metrics": summarize(results),
-        "dataset_sha256": hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest(),
+        "dataset_sha256": dataset_fingerprint(results),
     }
     if judge.provider == "jev":
         metadata.update(threshold=judge.threshold, review_low=judge.review_low, review_high=judge.review_high)
+    elif judge.provider == "jev_llm":
+        jev_models = sorted({r["jev_model"] for r in results if r.get("jev_model")})
+        llm_models = sorted({r["llm_model"] for r in results if r.get("llm_model")})
+        metadata.update(
+            confidence_threshold=judge.confidence_threshold,
+            confidence_source="TypeSafe binary Choice native confidence",
+            jev_requested_model=judge.jev.model, llm_requested_model=judge.fallback.model,
+            jev_resolved_models=jev_models, llm_resolved_models=llm_models,
+            resolved_models=sorted(set(jev_models + llm_models)),
+        )
     (folder / "run.json").write_text(json.dumps(metadata, indent=2, allow_nan=False) + "\n")
     return folder
+
+
+def dataset_fingerprint(rows):
+    source = [{k: r[k] for k in sorted(REQUIRED)} for r in rows]
+    return hashlib.sha256(json.dumps(source, sort_keys=True).encode()).hexdigest()
+
+
+def compare_runs(metadata, rows, rubric):
+    """Only compare runs against the same current data and rubric, including labels.
+
+    Completion/errors remain in the returned summaries so partial coverage is visible.
+    This does not mutate the baseline or any saved run.
+    """
+    fingerprint = dataset_fingerprint(rows)
+    for run in metadata.values():
+        if run["dataset_sha256"] != fingerprint or run["rubric"] != asdict(rubric):
+            raise ValueError("The data or rubric changed. Rerun the judges on the same rows and rubric before comparing.")
+    return {name: dict(run["metrics"]) for name, run in metadata.items()}

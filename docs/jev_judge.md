@@ -3,8 +3,8 @@
 The classifier chooses a support route. The judge checks a different question:
 **Does this classifier mistake belong to the failure category we chose?**
 
-Start by learning how an LLM judge works. Then try Jev if you want an alternative.
-Both see only the ticket and predicted route. We check their answers against your
+Start by learning how an LLM judge works. Then try Jev or add confidence-based escalation.
+All judges see only the ticket and predicted route. We check their answers against your
 Step 3 labels afterward. They never see the true route, failure label, or reviewer notes.
 
 For example, if the customer asks for a refund but the classifier chooses `order_status`,
@@ -28,16 +28,16 @@ refund request should be FALSE. FALSE means a different kind of mistake, not a c
    as CSV, or download the workbook as XLSX. Keep both your chosen category and other
    failures. Change `INPUT_PATH` and the rubric, then rerun from 11a.
 
-## 2. Optionally add Jev
+## 2. Optionally try Jev on its own
 
-In **Section 12**, use the same rows and rubric with Jev. Enter a TypeSafe key privately
+In **12a–12b**, use the same rows and rubric with Jev. Enter a TypeSafe key privately
 when prompted, or set `TYPESAFE_API_KEY` locally. If you only want Jev, run the shared
 setup in 11a–11b, then go straight to Section 12. No OpenAI key is needed for that path.
 
 | Type | Use it for | In this project |
 | --- | --- | --- |
-| **Noul** | A yes/no decision | Use this: does this mistake match our chosen failure category? |
-| Choice | Pick one of several named options | An extension: choose among all your failure categories, including `other`. |
+| **Noul** | A yes/no decision | Sections 12a–12b: does this mistake match our chosen failure category? |
+| **Choice** | Pick one of a fixed set of options | Section 12c: the same TRUE/FALSE task, with native confidence for escalation. It can also support multiple failure categories. |
 | Score | Rate something on ordered, descriptive levels | An extension: rate the severity of a mistake. You would need severity labels to evaluate it. |
 
 Try one ticket in **12a**, then run all examples and review the results in **12b**.
@@ -46,11 +46,64 @@ Jev's Noul returns the probability of TRUE. We use `p >= 0.5` for TRUE and flag
 Flagged rows still count in the metrics. The probability is not a quality score,
 and Jev does not produce a written reason.
 
-## 3. Reflect and save your work
+## 3. Add confidence-based escalation (optional)
 
-If you ran both judges, **13a** checks that the rows and rubric match and that there
-were no API errors before showing the metrics together. Compare false alarms, missed
-target failures, and individual decisions. You can also finish with just one judge.
+Keep the **Section 11 LLM-only run as your comparison baseline**, then run **12c**.
+This option needs both `TYPESAFE_API_KEY` and `OPENAI_API_KEY`, entered privately. It
+creates a separate fallback judge using the baseline's `LLM_MODEL` and saves its run
+under `jev_llm`; it does not overwrite the baseline or the standalone Noul run.
+
+**Jev call → validate output → confidence gate → LLM fallback → final verdict → logging.**
+
+Jev answers a specific question about **one chosen failure category**, just like the
+LLM judge. For `Refund_Missed`: **Does this ticket ask for a refund while the classifier
+routes it somewhere other than `refund_request`?** The actual question includes your
+category definition and both decision rules:
+
+```python
+{
+    "type": "choice",
+    "instructions": rubric.instructions,  # target category + definition
+    "criteria": {"true": rubric.positive, "false": rubric.negative},
+}
+```
+
+1. **Jev call:** ask a binary Choice with `true` and `false` options, using the same
+   ticket, predicted route, and rubric as the LLM-only baseline.
+2. **Validate output:** check the Choice answer, probability distribution, and finite
+   confidence in `[0, 1]`. Invalid output or a Jev API failure triggers fallback.
+3. **Confidence gate:** keep a valid Jev answer when its native `confidence` is **≥0.70**.
+   A value **<0.70** triggers fallback; exactly 0.70 stays with Jev.
+4. **LLM fallback:** judge the original ticket and route with the same rubric. The
+   fallback does not receive Jev's answer or your human reference label.
+5. **Final verdict:** use the accepted Jev answer or the validated LLM answer. If
+   fallback fails, set `status="unresolved"` and leave the final verdict and match empty.
+6. **Logging:** save each stage's result, confidence, model, usage, latency, and errors,
+   plus `judge_used`, `escalated`, and `escalation_reason` in the run's CSV and metadata.
+
+Choice supports this same binary task and uses the existing TRUE/FALSE labels.
+Its native confidence summarizes the probability distribution; it is not the probability
+of TRUE or a guarantee of correctness. Noul has no native `confidence` field, so its
+0.3–0.7 review band in 12a–12b is a separate exercise. The 70% gate is a starting policy
+to evaluate on held-out examples. See TypeSafe's [Choice](https://docs.typesafe.ai/primitives/choice)
+and [confidence](https://docs.typesafe.ai/confidence) documentation.
+
+Review the hybrid's disagreements, escalations, and unresolved cases. Check how often
+Jev handled a row, how often fallback ran, and whether the final verdict matched your
+label. An escalation is not itself an error; a successful fallback produces a completed
+verdict. Compare measured latency and returned token usage; no dollar savings are
+claimed without known pricing and comparable measured runs.
+
+## 4. Reflect and save your work
+
+**13a** checks every available run's dataset fingerprint and rubric against each other
+and the current rows and rubric. It shows completion coverage, errors, and unresolved
+cases separately. Agreement, precision, and recall use completed verdicts only. If a
+run is incomplete, resolve those failures before treating the table as a full comparison.
+`errors` counts all rows without a final verdict; `unresolved` is the hybrid subset,
+so do not add those two counts together.
+Compare false alarms, missed target failures, individual decisions, and latency against
+the LLM-only baseline. You can also finish with just one judge.
 
 To improve a rule, use a small practice subset, then check separate untouched examples.
 With very few rows, describe the result as exploratory; do not claim it proves a better judge.
@@ -63,7 +116,8 @@ it does not write directly into Google Sheets or fill the existing Step 5 templa
 
 Follow **13b** to submit your labeled workbook and result CSVs. In Step 6, explain one
 decision you reviewed and one rule you would improve. If you ran both judges, also say
-which you would use and why.
+which you would use and why. For the hybrid, include the 70% gate, escalation rate,
+unresolved count, and one example that used fallback.
 
 ## Try the included demo first
 
@@ -87,12 +141,13 @@ pip install -r requirements-judge.txt
 python -m unittest discover -s tests -v
 ```
 
-The Jev adapter posts a Noul question to `https://api.typesafe.ai/v1/systemone`.
-It records the resolved model, validates probabilities, and retries transient failures.
-Errors are shown separately from completed judgments; an error never becomes FALSE.
+The Jev adapters post Noul or Choice questions to `https://api.typesafe.ai/v1/systemone`.
+They record the resolved model, validate output, and retry transient failures.
+Errors and unresolved cases are shown separately from completed judgments; neither becomes FALSE.
 The default Jev model is pinned to `jev-1.14.0`; change it deliberately when comparing versions.
 
 Official references: [Noul](https://docs.typesafe.ai/primitives/noul),
 [Choice](https://docs.typesafe.ai/primitives/choice),
+[Confidence](https://docs.typesafe.ai/confidence),
 [Score](https://docs.typesafe.ai/primitives/score),
 [API](https://docs.typesafe.ai/api/system-one).
