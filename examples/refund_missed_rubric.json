@@ -1,0 +1,6 @@
+{
+  "target": "Refund_Missed",
+  "definition": "A post-purchase request for a refund, credit, charge reversal, money back, or price adjustment is routed elsewhere.",
+  "positive": "The customer asks for or asks about a refund, money back, credit, price adjustment, charge reversal, refund difference, or refund eligibility for their own order or payment, and the predicted category is not refund_request. This includes non-delivery with an explicit refund request and subscription cancellation with a refund request.",
+  "negative": "No post-purchase refund intent: delivery or account trouble alone, product problems without a refund request, feedback, or general policy/pre-purchase questions without an owned order/payment. Also false if the predicted category is already refund_request."
+}
